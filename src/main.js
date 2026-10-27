@@ -309,7 +309,7 @@ function renderSettings() {
       <button class="small" data-action="rem-save" style="margin-top:6px">저장</button></div>
     <div class="card"><h2>백업</h2>
       <div class="row wrap" style="gap:6px"><button class="small" data-action="export">내보내기 (JSON)</button><label class="small" style="display:inline-flex"><input type="file" id="import-file" accept="application/json,.json" class="hidden"><button class="small" data-action="import-pick">가져오기</button></label></div>
-      <p class="faint">모든 데이터는 이 기기에만 저장됩니다. 주 1회 백업을 권합니다.</p></div>
+      <p class="faint">모든 데이터는 <b>이 주소(${esc(location.host)})를 연 이 브라우저</b>에만 저장됩니다. 다른 브라우저·메신저 안의 브라우저·홈 화면 앱은 각각 별도 저장소라 서로 보이지 않습니다. 한 가지 방법(홈 화면 앱 권장)으로만 열고, 주 1회 백업을 권합니다.${ui.persisted === false ? ' <span class="warn">브라우저가 용량 부족 시 이 데이터를 지울 수 있습니다. 홈 화면에 추가하면 보호됩니다.</span>' : ''}</p></div>
     ${st ? `<div class="card"><h2>통계 (목표 시작 후 ${st.days}일)</h2><table class="stats">
       <tr><td>체중 기록률</td><td>${Math.round(st.weightRate * 100)}%</td></tr><tr><td>식사 기록률</td><td>${Math.round(st.mealRate * 100)}%</td></tr>
       <tr><td>예산 준수율</td><td>${Math.round(st.budgetRate * 100)}%</td></tr><tr><td>운동 완료율</td><td>${Math.round(st.workoutRate * 100)}%</td></tr>
@@ -471,5 +471,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { ui
 
 // ---------- 시작 ----------
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+// 브라우저가 저장 공간 부족 시 이 사이트 데이터를 지우지 않도록 요청 (지원 브라우저만; 거부돼도 앱은 그대로 동작)
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(ok => { ui.persisted = ok; }).catch(() => {});
 if (!app.state.onboarded) onboarding(); else ui.notices = app.runMaintenance();
 render();

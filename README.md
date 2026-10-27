@@ -4,7 +4,13 @@
 
 빌드 도구·백엔드 없음. 정적 파일만으로 동작하고 모든 데이터는 기기 로컬(localStorage)에만 저장된다.
 
-## 실행
+## 실행 링크
+
+- 앱: **https://hubertshin.github.io/diet-app/** (GitHub Pages, `main` 브랜치 루트에서 자동 배포)
+- 휴대폰: 위 주소를 열고 iOS Safari는 공유 → 「홈 화면에 추가」, Android Chrome은 메뉴 → 「앱 설치」.
+- 저장소: https://github.com/hubertshin/diet-app — `main`에 push 하면 1~2분 뒤 반영된다.
+
+## 로컬 실행
 
 ES 모듈이라 `file://`로는 열리지 않는다. 아무 정적 서버로 서빙한다:
 

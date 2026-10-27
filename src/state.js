@@ -6,6 +6,7 @@ import { findFood } from './foods.js';
 export function emptyState() {
   return {
     version: CONFIG.schemaVersion,
+    updatedAt: 0,
     onboarded: false,
     settings: {
       tdee: CONFIG.defaultTdee,
@@ -41,17 +42,22 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
   let state = (storage && storage.load()) || emptyState();
   state = migrate(state);
   const events = [];
+  const changeListeners = [];
 
   function emit(name, data = {}) {
     const ev = { name, at: now().toISOString(), ...data };
     events.push(ev);
     onEvent(ev);
   }
-  function persist() {
+  // touch=false 는 동기화로 받은 데이터 적용 등 "사용자 변경이 아닌" 저장 — updatedAt 을 올리지 않고 변경 리스너도 부르지 않는다
+  function persist({ touch = true } = {}) {
+    if (touch) state.updatedAt = now().getTime();
     const ok = storage ? storage.save(state) : true;
     if (!ok) emit('save_failed');
+    if (touch) for (const fn of changeListeners) fn(state);
     return ok;
   }
+  function onChange(fn) { changeListeners.push(fn); return () => { const i = changeListeners.indexOf(fn); if (i >= 0) changeListeners.splice(i, 1); }; }
   function today() { return C.toDateStr(now()); }
   function nowTime() { const d = now(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
   function editable(date, days) {
@@ -396,12 +402,7 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
     if (!obj || obj.app !== 'diet' || !obj.data || typeof obj.data !== 'object' || !obj.data.version) return { ok: false, reason: 'format' };
     return { ok: true, data: migrate(obj.data), summary: summarize(obj.data) };
   }
-  function importJson(text, mode = 'replace') {
-    const r = parseImport(text);
-    if (!r.ok) return r;
-    if (mode === 'replace') state = r.data;
-    else {
-      const d = r.data;
+  function mergeInto(d) {
       Object.assign(state.weights, d.weights);
       for (const [k, list] of Object.entries(d.meals)) { const cur = (state.meals[k] ||= []); const ids = new Set(cur.map(m => m.id)); for (const m of list) if (!ids.has(m.id)) cur.push(m); }
       for (const [k, v] of Object.entries(d.workouts)) state.workouts[k] = { ...(state.workouts[k] || {}), ...v };
@@ -411,10 +412,26 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
       Object.assign(state.snapshots, d.snapshots);
       Object.assign(state.cheat.scheduled, d.cheat.scheduled);
       if (!state.goal) state.goal = d.goal;
+      if (!state.settings.profile.sex && d.settings && d.settings.profile) state.settings.profile = d.settings.profile;
       state.onboarded = state.onboarded || d.onboarded;
-    }
+  }
+  function importJson(text, mode = 'replace') {
+    const r = parseImport(text);
+    if (!r.ok) return r;
+    if (mode === 'replace') state = r.data; else mergeInto(r.data);
     persist();
     return { ok: true, summary: r.summary };
+  }
+  // 동기화(R-15)로 받은 원격 상태 적용. replace 는 삭제까지 그대로 반영, merge 는 합집합(체중은 원격 우선).
+  // 사용자 변경이 아니므로 updatedAt 은 양쪽 중 큰 값으로 두고 변경 리스너를 부르지 않는다.
+  function applyRemote(remote, mode = 'replace') {
+    const d = migrate(remote);
+    const newest = Math.max(state.updatedAt || 0, d.updatedAt || 0);
+    if (mode === 'replace') state = d; else mergeInto(d);
+    state.updatedAt = newest;
+    persist({ touch: false });
+    emit('sync_applied', { mode });
+    return state;
   }
   function reset() { state = emptyState(); if (storage) storage.clear(); persist(); }
 
@@ -444,7 +461,7 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
     setWeight, deleteWeight, addMeal, updateMeal, removeMeal, addCustomFood, toggleFavorite,
     setWorkout, updateWorkoutItems, setGoal, restartGoal, useCheat, cancelCheat, setFastingWindow,
     setSettings, completeOnboarding, runMaintenance, acceptSuggestion, dismissSuggestion,
-    exportJson, parseImport, importJson, reset, findFood: id => findFood(id, state.customs),
+    exportJson, parseImport, importJson, applyRemote, onChange, reset, findFood: id => findFood(id, state.customs),
   };
 }
 

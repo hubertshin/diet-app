@@ -2,12 +2,15 @@
 import { CONFIG } from './config.js';
 import { createApp } from './state.js';
 import { createStorage } from './storage.js';
+import { createSync } from './sync.js';
 import { searchFoods } from './foods.js';
 import { weightChart, kcalChart, workoutChart, accuracyChart } from './chart.js';
 import { addDays, parseDate, toDateStr, simulate, estimateTdee } from './calc.js';
 
 const DEBUG = location.search.includes('debug');
 const app = createApp({ storage: createStorage(), onEvent: ev => { if (DEBUG) console.log('[event]', ev); } });
+const sync = createSync({ app });
+app.onChange(() => sync.schedulePush());
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -276,6 +279,23 @@ function renderCal() {
 }
 
 // ---------- 설정 ----------
+const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=gist&description=diet-app-sync';
+function fmtTime(ms) { if (!ms) return '—'; const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+function renderSyncCard() {
+  const st = sync.status();
+  if (!st.connected) {
+    return `<p class="small muted">GitHub 계정의 <b>비공개 Gist</b>에 기록을 자동 저장해 휴대폰·PC 어디서나 같은 기록을 봅니다. 서버 없음.</p>
+      <ol class="small muted" style="padding-left:18px;margin:6px 0"><li><a href="${TOKEN_URL}" target="_blank" rel="noopener">GitHub 토큰 만들기</a> (gist 권한만 체크된 상태로 열립니다) → Generate → 복사</li><li>아래에 붙여넣고 연결</li></ol>
+      <div class="row" style="gap:6px"><input type="password" id="sync-token" placeholder="ghp_… 토큰" autocomplete="off" style="flex:1"><button class="small primary" data-action="sync-connect">연결</button></div>
+      ${ui.syncMsg ? `<p class="small warn">${esc(ui.syncMsg)}</p>` : ''}
+      <p class="faint">토큰은 이 기기에만 저장되며 Gist 권한만 가집니다. 기기를 잃어버리면 GitHub 설정에서 토큰을 삭제하세요.</p>`;
+  }
+  const badge = st.status === 'ok' ? '<span class="good">연결됨 ✅</span>' : st.status === 'auth' ? '<span class="bad">토큰 오류 ⛔</span>' : '<span class="warn">오류 ⚠️</span>';
+  return `<p class="small">${badge} · <b>${esc(st.login || '')}</b> · 마지막 동기화 ${fmtTime(st.lastSyncAt)}${ui.syncing ? ' · 동기화 중…' : ''}</p>
+    ${st.error ? `<p class="small warn">${esc(st.error)}${st.status === 'auth' ? ' — 연결 해제 후 새 토큰으로 다시 연결하세요.' : ' — 다음 변경이나 화면 복귀 때 다시 시도합니다.'}</p>` : ''}
+    <div class="row wrap" style="gap:6px"><button class="small" data-action="sync-now">지금 동기화</button><button class="small" data-action="sync-disconnect">연결 해제</button></div>
+    <p class="faint">기록이 바뀌면 3초 뒤 자동으로 올리고, 앱을 열 때마다 먼저 내려받습니다. 두 기기에서 동시에 바꾸면 병합합니다(체중은 나중에 받은 쪽 우선).</p>`;
+}
 function renderSettings() {
   const s = app.state.settings, g = app.state.goal;
   const st = app.stats();
@@ -307,6 +327,7 @@ function renderSettings() {
       <div class="row wrap" style="gap:6px;margin-top:6px"><label class="row small"><input type="checkbox" id="s-rem-w" ${s.reminders.weight.on ? 'checked' : ''}> 아침 체중</label><input type="time" id="s-rem-w-at" style="width:auto" value="${s.reminders.weight.at}">
         <label class="row small"><input type="checkbox" id="s-rem-k" ${s.reminders.workout.on ? 'checked' : ''}> 저녁 운동</label><input type="time" id="s-rem-k-at" style="width:auto" value="${s.reminders.workout.at}"></div>
       <button class="small" data-action="rem-save" style="margin-top:6px">저장</button></div>
+    <div class="card"><h2>동기화 (여러 기기)</h2>${renderSyncCard()}</div>
     <div class="card"><h2>백업</h2>
       <div class="row wrap" style="gap:6px"><button class="small" data-action="export">내보내기 (JSON)</button><label class="small" style="display:inline-flex"><input type="file" id="import-file" accept="application/json,.json" class="hidden"><button class="small" data-action="import-pick">가져오기</button></label></div>
       <p class="faint">모든 데이터는 <b>이 주소(${esc(location.host)})를 연 이 브라우저</b>에만 저장됩니다. 다른 브라우저·메신저 안의 브라우저·홈 화면 앱은 각각 별도 저장소라 서로 보이지 않습니다. 한 가지 방법(홈 화면 앱 권장)으로만 열고, 주 1회 백업을 권합니다.${ui.persisted === false ? ' <span class="warn">브라우저가 용량 부족 시 이 데이터를 지울 수 있습니다. 홈 화면에 추가하면 보호됩니다.</span>' : ''}</p></div>
@@ -399,6 +420,17 @@ document.addEventListener('click', e => {
     case 'rem-save': app.setSettings({ reminders: { weight: { on: $('#s-rem-w').checked, at: $('#s-rem-w-at').value || CONFIG.reminders.weightAt }, workout: { on: $('#s-rem-k').checked, at: $('#s-rem-k-at').value || CONFIG.reminders.workoutAt } } }); toast('알림 설정 저장'); break;
     case 'export': { const blob = new Blob([app.exportJson()], { type: 'application/json' }); const a2 = document.createElement('a'); a2.href = URL.createObjectURL(blob); a2.download = `diet-backup-${today}.json`; a2.click(); setTimeout(() => URL.revokeObjectURL(a2.href), 1000); break; }
     case 'import-pick': $('#import-file').click(); break;
+    case 'sync-connect': {
+      const tok = $('#sync-token').value; t.disabled = true; ui.syncMsg = ''; ui.syncing = true; render();
+      sync.connect(tok).then(r => {
+        ui.syncing = false;
+        if (r.ok) { toast(r.existing ? `연결됨 · 기존 기록을 내려받았습니다 (${r.login})` : `연결됨 · 새 Gist 에 저장했습니다 (${r.login})`); ui.notices = app.runMaintenance(); }
+        else ui.syncMsg = r.message;
+        render();
+      });
+      break; }
+    case 'sync-now': ui.syncing = true; render(); sync.pull().then(r => { ui.syncing = false; toast(r.ok ? { none: '이미 최신입니다', replaced: '내려받기 완료', merged: '병합 완료', pushed: '올리기 완료' }[r.action] : `동기화 실패: ${r.message}`); render(); }); break;
+    case 'sync-disconnect': if (confirm('동기화를 해제할까요? 이 기기의 기록과 Gist 는 그대로 남습니다.')) { sync.disconnect(); render(); } break;
     case 'reset': if (confirm('모든 데이터를 삭제할까요? 먼저 내보내기를 권합니다.') && confirm('정말 삭제합니다. 되돌릴 수 없습니다.')) { app.reset(); location.reload(); } break;
     // 온보딩
     case 'ob-next': { const step = t.dataset.step; if (step === '2') { const b = parseFloat($('#ob-base').value); if (!(b >= CONFIG.weight.min && b <= CONFIG.weight.max)) { toast('체중을 확인하세요'); break; } } document.querySelectorAll('.ob-step').forEach(s => s.classList.toggle('active', s.dataset.step === step)); break; }
@@ -467,11 +499,20 @@ setInterval(checkReminders, 30000);
 let lastDay = app.today();
 setInterval(() => { if (app.today() !== lastDay) { lastDay = app.today(); ui.logDate = lastDay; ui.notices = app.runMaintenance(); render(); } }, 60000);
 window.addEventListener('resize', renderSide);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { ui.notices = app.runMaintenance(); render(); } });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  ui.notices = app.runMaintenance(); render();
+  if (sync.connected()) sync.pull().then(r => { if (r.ok && r.action !== 'none') { ui.notices = app.runMaintenance(); render(); } });
+});
+sync.onStatus(() => { if (ui.tab === 'settings') render(); });
 
 // ---------- 시작 ----------
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 // 브라우저가 저장 공간 부족 시 이 사이트 데이터를 지우지 않도록 요청 (지원 브라우저만; 거부돼도 앱은 그대로 동작)
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(ok => { ui.persisted = ok; }).catch(() => {});
-if (!app.state.onboarded) onboarding(); else ui.notices = app.runMaintenance();
-render();
+function boot() { if (!app.state.onboarded) onboarding(); else ui.notices = app.runMaintenance(); render(); }
+if (sync.connected()) {
+  // 연결된 기기는 먼저 Gist 를 내려받은 뒤 시작 (다른 기기에서 바꾼 기록 반영). 실패해도 로컬로 시작한다.
+  render(); toast('동기화 중…', { ms: 2500 });
+  sync.pull().then(r => { if (!r.ok) toast(`동기화 실패: ${r.message} · 로컬 기록으로 계속합니다`); }).finally(boot);
+} else boot();

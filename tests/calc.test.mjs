@@ -189,7 +189,15 @@ describe('R-5 운동 체크리스트', () => {
     const pushup = s.rows.find(r => r.id === 'pushup'), situp = s.rows.find(r => r.id === 'situp');
     assert.ok(pushup.complete); assert.equal(pushup.kcal, 80);
     assert.ok(!situp.complete); assert.equal(situp.kcal, 30);
-    assert.equal(s.done, 1); assert.equal(s.total, 4); assert.equal(s.rate, 0.25);
+    assert.equal(s.done, 1); assert.equal(s.total, 4); assert.equal(s.rate, 0.375, '완료율 = (1 + 0.5 + 0 + 0) / 4');
+  });
+  test('부분 수행도 완료율에 비례 반영: 200개 중 50개면 그 항목은 1/4 (하루 4항목이면 1/16)', () => {
+    const s = C.workoutSummary('2026-10-27', { pushup: { count: 50 } });
+    assert.equal(s.rows.find(r => r.id === 'pushup').ratio, 0.25);
+    assert.equal(s.rate, 0.0625); assert.equal(s.done, 0);
+    const half = C.workoutSummary('2026-10-27', { pushup: { count: 100 }, situp: { count: 100 }, chest: { count: 50 }, shoulder: { count: 50 } });
+    assert.equal(half.rate, 0.5, '전부 절반씩이면 50%');
+    assert.equal(C.workoutSummary('2026-10-27', { pushup: { count: 400 } }).rate, 0.25, '초과 수행은 1배 상한');
   });
   test('done 체크는 목표 개수로 간주한다', () => {
     const s = C.workoutSummary('2026-10-27', { chest: { done: true } });

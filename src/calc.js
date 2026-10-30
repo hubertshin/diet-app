@@ -135,7 +135,9 @@ export function workoutSummary(date, log = {}, items = CONFIG.workouts, weight =
     return { ...w, count, ratio, kcal: itemKcal, complete: ratio >= 1, slot: entry.slot || null };
   });
   const fullKcal = todays.reduce((a, w) => a + scaleKcal(w.kcal, weight), 0);
-  return { rows, kcal, fullKcal, done, total: todays.length, rate: todays.length ? done / todays.length : 0 };
+  // 완료율 = 항목별 수행 비율의 평균. 200개 중 50개를 하면 그 항목은 1/4 만큼 올라간다 (부분 수행 반영). 모두 끝내야 1.
+  const rate = todays.length ? rows.reduce((a, r) => a + r.ratio, 0) / todays.length : 0;
+  return { rows, kcal, fullKcal, done, total: todays.length, rate };
 }
 
 // ---------- 예측 (R-6) ----------

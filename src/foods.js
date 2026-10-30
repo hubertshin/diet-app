@@ -92,18 +92,19 @@ export const SYNONYMS = Object.freeze([
   ['닭', ['치킨']], ['치킨', ['닭']], ['소고기', ['쇠고기', '우']], ['쇠고기', ['소고기']], ['커피', ['아메리카노', '라떼']], ['빵', ['베이글', '크루아상', '식빵']],
   ['콜라', ['코크']], ['맥주', ['비어']], ['고기', ['삼겹살', '목살', '갈비']],
 ]);
-export function expandQuery(q) {
+export function expandQuery(q, synonyms = SYNONYMS) {
   const out = new Set([q]);
-  for (const [from, tos] of SYNONYMS) if (q.includes(from)) for (const to of tos) out.add(q.replace(from, to));
+  for (const [from, tos] of synonyms) if (q.includes(from)) for (const to of tos) out.add(q.replace(from, to));
   return [...out];
 }
 
-export function matches(name, query) {
+// 이름 일치 판정. synonyms 를 바꿔 끼우면 운동 DB(exercises.js)처럼 다른 사전에도 같은 검색(부분 일치·초성·동의어)을 쓸 수 있다.
+export function matches(name, query, synonyms = SYNONYMS) {
   const q = norm(query);
   if (!q) return false;
   if (isChosungQuery(q)) return norm(toChosung(name)).includes(q);
   const n = norm(name);
-  return expandQuery(q).some(x => n.includes(x));
+  return expandQuery(q, synonyms).some(x => n.includes(x));
 }
 
 // 검색 정렬: 즐겨찾기 → 최근 → DB. recent/favorites는 음식 id 집합. customs는 사용자 직접 입력 항목.

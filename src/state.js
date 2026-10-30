@@ -2,6 +2,7 @@
 import { CONFIG } from './config.js';
 import * as C from './calc.js';
 import { findFood } from './foods.js';
+import { findExercise, exerciseKcal } from './exercises.js';
 
 export function emptyState() {
   return {
@@ -26,6 +27,9 @@ export function emptyState() {
     weights: {},
     meals: {},
     workouts: {},
+    exercises: {},       // date -> [{ id, exerciseId, name, unit, amount, kcalPerUnit, kcal, time }] 자유 운동 기록 (R-16)
+    customExercises: [], // 사용자 직접 입력 운동 종류
+    exerciseFavorites: [],
     fastingWindow: {},   // date -> 'HH:MM' (단식일 창 시작)
     customs: [],
     favorites: [],
@@ -80,8 +84,13 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
   function intakeOn(date) {
     return (state.meals[date] || []).reduce((a, m) => a + Math.round(m.kcal * m.portion), 0);
   }
+  function exerciseLogsOn(date) { return (state.exercises[date] || []).slice().sort((a, b) => a.time.localeCompare(b.time)); }
+  function exerciseKcalOn(date) { return (state.exercises[date] || []).reduce((a, e) => a + (Number(e.kcal) || 0), 0); }
+  // 운동 kcal = 체크리스트(R-5) + 자유 기록(R-16). rows/rate 는 체크리스트만, kcal 는 합계 (예산·예측·보정이 모두 이 값을 쓴다).
   function workoutOn(date) {
-    return C.workoutSummary(date, state.workouts[date] || {}, allItemsOn(date), C.trendWeight(state.weights, date));
+    const s = C.workoutSummary(date, state.workouts[date] || {}, allItemsOn(date), C.trendWeight(state.weights, date));
+    const extraKcal = exerciseKcalOn(date);
+    return { ...s, checklistKcal: s.kcal, extraKcal, kcal: s.kcal + extraKcal, logs: exerciseLogsOn(date) };
   }
   function targetOn(date) { return state.goal ? C.targetWeightOn(state.goal, date) : null; }
 
@@ -166,7 +175,7 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
       meals, workout, prediction: prediction(date),
       fasting: judge.status === 'fasting' ? { ...win, broken: fastingBroken } : null,
       suggestion: state.pendingSuggestion,
-      editable: { weight: editable(date, CONFIG.weight.editableDays), meals: editable(date, CONFIG.meals.editableDays) },
+      editable: { weight: editable(date, CONFIG.weight.editableDays), meals: editable(date, CONFIG.meals.editableDays), exercises: editable(date, CONFIG.exercises.editableDays) },
     };
   }
 
@@ -254,6 +263,56 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
     versions.sort((a, b) => a.from.localeCompare(b.from));
     state.settings.workoutVersions = versions;
     persist();
+  }
+
+  // ---------- 자유 운동 기록 (R-16) ----------
+  function addExercise(date, { exerciseId = null, name, unit = '회', amount = 1, kcalPerUnit = null, kcal = null, time = nowTime() }) {
+    if (!editable(date, CONFIG.exercises.editableDays)) return { ok: false, reason: 'not-editable' };
+    if (!name || !(amount > 0) || !((kcalPerUnit > 0) || (kcal >= 0 && kcal !== null))) return { ok: false, reason: 'invalid' };
+    const list = (state.exercises[date] ||= []);
+    if (list.length >= CONFIG.exercises.maxPerDay) return { ok: false, reason: 'limit' };
+    const computed = kcal !== null && kcalPerUnit === null ? Math.round(kcal) : exerciseKcal({ kcal: kcalPerUnit, amount, weight: C.trendWeight(state.weights, date), refWeight: CONFIG.workoutRefWeight });
+    const entry = { id: uid(), exerciseId, name, unit, amount, kcalPerUnit, kcal: computed, time };
+    list.push(entry);
+    emit('exercise_logged', { date, exerciseId, kcal: computed });
+    persist();
+    return { ok: true, entry };
+  }
+  function updateExercise(date, id, patch) {
+    const e = (state.exercises[date] || []).find(x => x.id === id);
+    if (!e) return { ok: false, reason: 'not-found' };
+    if (patch.amount !== undefined && !(patch.amount > 0)) return { ok: false, reason: 'invalid' };
+    Object.assign(e, patch);
+    if (patch.amount !== undefined && e.kcalPerUnit > 0 && patch.kcal === undefined) e.kcal = exerciseKcal({ kcal: e.kcalPerUnit, amount: e.amount, weight: C.trendWeight(state.weights, date), refWeight: CONFIG.workoutRefWeight });
+    persist();
+    return { ok: true, entry: e };
+  }
+  function removeExercise(date, id) {
+    const list = state.exercises[date] || [];
+    const idx = list.findIndex(x => x.id === id);
+    if (idx < 0) return { ok: false, reason: 'not-found' };
+    const [removed] = list.splice(idx, 1);
+    if (list.length === 0) delete state.exercises[date];
+    persist();
+    return { ok: true, restore: () => { (state.exercises[date] ||= []).splice(Math.min(idx, (state.exercises[date] || []).length), 0, removed); persist(); } };
+  }
+  function addCustomExercise({ name, unit = '회', kcal, amount }) {
+    if (!name || !['분', '회', 'km'].includes(unit) || !(kcal > 0)) return { ok: false, reason: 'invalid' };
+    const ex = { id: `cex-${uid()}`, name: name.trim(), category: '직접 입력', unit, kcal: Math.round(kcal * 100) / 100, amount: amount > 0 ? amount : (unit === '분' ? 30 : unit === 'km' ? 5 : 20), custom: true };
+    state.customExercises.unshift(ex);
+    persist();
+    return { ok: true, exercise: ex };
+  }
+  function toggleExerciseFavorite(id) {
+    const i = state.exerciseFavorites.indexOf(id);
+    if (i >= 0) state.exerciseFavorites.splice(i, 1); else state.exerciseFavorites.push(id);
+    persist();
+    return i < 0;
+  }
+  function recentExerciseIds(date = today(), days = 14) {
+    const ids = new Set();
+    for (const d of C.dateRange(C.addDays(date, -days), date)) for (const e of state.exercises[d] || []) if (e.exerciseId) ids.add(e.exerciseId);
+    return ids;
   }
 
   function setGoal({ startDate = today(), startWeight, targetWeight = CONFIG.goal.targetWeight, periodDays = CONFIG.goal.periodDays }) {
@@ -374,7 +433,7 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
       return {
         date: d, weight: v, trend: C.trendWeight(state.weights, d), target: targetOn(d),
         intake: intakeOn(d), budget: d < state.goal.startDate ? null : b.budget.budget, logged: (state.meals[d] || []).length > 0,
-        workoutRate: workoutOn(d).rate, run: !!(state.workouts[d]?.run5k?.done || (state.workouts[d]?.run5k?.count >= 5)),
+        workoutRate: workoutOn(d).rate, workoutKcal: workoutOn(d).kcal, exerciseKcal: exerciseKcalOn(d), run: !!(state.workouts[d]?.run5k?.done || (state.workouts[d]?.run5k?.count >= 5)),
         status: (judged[d] || {}).status || 'missing', sticker: !!(judged[d] || {}).sticker, cheat: !!state.cheat.scheduled[d],
         snapshot: state.snapshots[d] ?? null,
       };
@@ -394,7 +453,7 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
   // ---------- 백업·복원 (R-13) ----------
   function exportJson() { return JSON.stringify({ app: 'diet', exportedAt: now().toISOString(), data: state }, null, 2); }
   function summarize(data) {
-    return { weights: Object.keys(data.weights || {}).length, meals: Object.values(data.meals || {}).reduce((a, l) => a + l.length, 0), workouts: Object.keys(data.workouts || {}).length, customs: (data.customs || []).length };
+    return { weights: Object.keys(data.weights || {}).length, meals: Object.values(data.meals || {}).reduce((a, l) => a + l.length, 0), workouts: Object.keys(data.workouts || {}).length, exercises: Object.values(data.exercises || {}).reduce((a, l) => a + l.length, 0), customs: (data.customs || []).length };
   }
   function parseImport(text) {
     let obj;
@@ -406,6 +465,10 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
       Object.assign(state.weights, d.weights);
       for (const [k, list] of Object.entries(d.meals)) { const cur = (state.meals[k] ||= []); const ids = new Set(cur.map(m => m.id)); for (const m of list) if (!ids.has(m.id)) cur.push(m); }
       for (const [k, v] of Object.entries(d.workouts)) state.workouts[k] = { ...(state.workouts[k] || {}), ...v };
+      for (const [k, list] of Object.entries(d.exercises || {})) { const cur = (state.exercises[k] ||= []); const ids = new Set(cur.map(e => e.id)); for (const e of list) if (!ids.has(e.id)) cur.push(e); }
+      const xids = new Set(state.customExercises.map(c => c.id));
+      for (const c of d.customExercises || []) if (!xids.has(c.id)) state.customExercises.push(c);
+      state.exerciseFavorites = [...new Set([...state.exerciseFavorites, ...(d.exerciseFavorites || [])])];
       const cids = new Set(state.customs.map(c => c.id));
       for (const c of d.customs) if (!cids.has(c.id)) state.customs.push(c);
       state.favorites = [...new Set([...state.favorites, ...d.favorites])];
@@ -459,9 +522,9 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
     get state() { return state; }, events, today, nowTime,
     dayView, graphData, stats, prediction, judgeUpTo, workoutItemsOn, recentFoodIds,
     setWeight, deleteWeight, addMeal, updateMeal, removeMeal, addCustomFood, toggleFavorite,
-    setWorkout, updateWorkoutItems, setGoal, restartGoal, useCheat, cancelCheat, setFastingWindow,
+    setWorkout, updateWorkoutItems, addExercise, updateExercise, removeExercise, addCustomExercise, toggleExerciseFavorite, recentExerciseIds, setGoal, restartGoal, useCheat, cancelCheat, setFastingWindow,
     setSettings, completeOnboarding, runMaintenance, acceptSuggestion, dismissSuggestion,
-    exportJson, parseImport, importJson, applyRemote, onChange, reset, findFood: id => findFood(id, state.customs),
+    exportJson, parseImport, importJson, applyRemote, onChange, reset, findFood: id => findFood(id, state.customs), findExercise: id => findExercise(id, state.customExercises),
   };
 }
 
@@ -471,6 +534,10 @@ export function migrate(data) {
   const out = { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) }, cheat: { ...base.cheat, ...(data.cheat || {}) } };
   out.settings.reminders = { ...base.settings.reminders, ...(out.settings.reminders || {}) };
   if (!Array.isArray(out.settings.workoutVersions) || out.settings.workoutVersions.length === 0) out.settings.workoutVersions = base.settings.workoutVersions;
+  // v1 → v2: 운동 기록 필드 추가. 기존 체중·식사·체크리스트 기록은 손대지 않는다.
+  if (!out.exercises || typeof out.exercises !== 'object') out.exercises = {};
+  if (!Array.isArray(out.customExercises)) out.customExercises = [];
+  if (!Array.isArray(out.exerciseFavorites)) out.exerciseFavorites = [];
   out.version = CONFIG.schemaVersion;
   return out;
 }

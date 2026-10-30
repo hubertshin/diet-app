@@ -1,6 +1,6 @@
 // 다이어트 코치 서비스 워커 (루트에 두어야 앱 전체가 scope에 들어간다): 앱 셸을 캐시해 오프라인에서도 전 기능이 동작하게 한다 (모든 데이터는 로컬).
-const CACHE = 'diet-v3';
-const SHELL = ['./', './index.html', './src/config.js', './src/calc.js', './src/foods.js', './src/foods-data.js', './src/storage.js', './src/sync.js',
+const CACHE = 'diet-v4';
+const SHELL = ['./', './index.html', './src/config.js', './src/calc.js', './src/foods.js', './src/foods-data.js', './src/exercises.js', './src/storage.js', './src/sync.js',
   './src/state.js', './src/chart.js', './src/main.js', './public/manifest.webmanifest', './public/icon-192.png', './public/icon-512.png'];
 
 self.addEventListener('install', e => {

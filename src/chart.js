@@ -128,6 +128,24 @@ export function workoutChart({ rows, width = 360, height = 150 }) {
   return svg + legend([{ cls: 'bar', label: '완료율 %' }, { cls: 'full', label: '100%' }, { cls: 'run', label: '🏃 5km' }]);
 }
 
+// ③-b 운동 소모 kcal: 체크리스트 + 자유 기록 합계 막대 (R-16)
+export function exerciseKcalChart({ rows, width = 360, height = 150 }) {
+  const n = rows.length;
+  const vals = rows.map(r => r.workoutKcal || 0);
+  if (!vals.some(v => v > 0)) return `<div class="viz-empty">운동을 기록하면 소모 kcal 그래프가 보입니다</div>`;
+  const yMax = Math.max(200, Math.ceil((Math.max(...vals) + 50) / 100) * 100);
+  const f = frame({ width, height, xCount: n, yMin: 0, yMax, xLabels: rows.map(r => mmdd(r.date)) });
+  const bw = Math.max(3, (f.W / n) - 2);
+  let s = '';
+  rows.forEach((r, i) => {
+    const v = r.workoutKcal || 0;
+    if (v <= 0) return;
+    s += `<rect class="viz-bar full" data-i="${i}" x="${f.x(i) - bw / 2}" y="${f.y(v)}" width="${bw}" height="${Math.max(0, f.H - (f.y(v) - PAD.t))}" rx="2"/>`;
+  });
+  const svg = `<svg class="viz" viewBox="0 0 ${width} ${height}" role="img" aria-label="운동 소모 kcal 그래프">${f.grid}${s}</svg>`;
+  return svg + legend([{ cls: 'full', label: '운동 kcal (체크리스트 + 기록)' }]);
+}
+
 // ④ 예측 정확도: 14일 전 스냅샷 vs 실제 추세
 export function accuracyChart({ rows, meanErr, width = 360, height = 170 }) {
   const pairs = rows.map((r, i) => {

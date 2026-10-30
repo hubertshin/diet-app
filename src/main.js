@@ -4,7 +4,8 @@ import { createApp } from './state.js';
 import { createStorage } from './storage.js';
 import { createSync } from './sync.js';
 import { searchFoods } from './foods.js';
-import { weightChart, kcalChart, workoutChart, accuracyChart } from './chart.js';
+import { searchExercises, EXERCISE_UNITS } from './exercises.js';
+import { weightChart, kcalChart, workoutChart, exerciseKcalChart, accuracyChart } from './chart.js';
 import { addDays, parseDate, toDateStr, simulate, estimateTdee } from './calc.js';
 
 const DEBUG = location.search.includes('debug');
@@ -23,6 +24,7 @@ const TABS = ['home', 'log', 'graph', 'cal', 'settings'];
 const ui = {
   tab: TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'home', logDate: app.today(), calMonth: app.today().slice(0, 7), calSel: app.today(),
   range: 30, sim: null, query: '', notices: [], tip: '', lastSticker: null, weightDraft: '',
+  exQuery: '', exPick: null, exDate: null,   // 운동 기록 시트 (R-16)
 };
 const STATUS_LABEL = { pass: '합격 ✅', fail: '미달', fasting: '23시간 단식', reset: '경로 재설정 권고', cheat: '치팅데이 🎉', missing: '미측정' };
 
@@ -108,7 +110,19 @@ function workoutBlock(v) {
       : `<input type="number" inputmode="numeric" min="0" value="${r.count || ''}" placeholder="0" data-action="wk-count" data-id="${r.id}" aria-label="${esc(r.name)} 수행 ${r.unit}">`}
     <button class="small ${r.complete ? 'primary' : ''}" data-action="wk-done" data-id="${r.id}" aria-pressed="${r.complete}">${r.complete ? '완료' : '체크'}</button>
   </div>`).join('');
-  return `<div class="card tight"><div class="row between"><h2 style="margin:0">운동 체크리스트 <span class="num">${w.done}/${w.total}</span></h2><span class="small muted num">+${w.kcal} kcal</span></div>${rows}</div>`;
+  return `<div class="card tight"><div class="row between"><h2 style="margin:0">운동 체크리스트 <span class="num">${w.done}/${w.total}</span></h2><span class="small muted num">+${w.checklistKcal} kcal</span></div>${rows}</div>
+    ${exerciseCard(v)}`;
+}
+
+// 자유 운동 기록 (R-16): 체크리스트 밖의 운동을 DB에서 찾아 수량과 함께 기록한다. 홈과 기록 탭 양쪽에서 같은 카드를 쓴다.
+function exerciseCard(v) {
+  const logs = v.workout.logs.map(e => `<div class="meal">
+    <div><div class="name">${esc(e.name)}</div><div class="sub"><span class="num">${e.amount}${esc(e.unit)}</span> · ${e.time}</div></div>
+    <span class="num"><b>${e.kcal}</b> <span class="faint">kcal</span></span>
+    <button class="small" data-action="ex-del" data-date="${v.date}" data-id="${e.id}" aria-label="삭제">🗑</button></div>`).join('');
+  return `<div class="card tight"><div class="row between"><h2 style="margin:0">운동 기록 <span class="small muted num">+${v.workout.extraKcal} kcal</span></h2>
+      ${v.editable.exercises ? `<button class="small primary" data-action="ex-open" data-date="${v.date}">+ 운동 추가</button>` : ''}</div>
+    ${logs || '<p class="muted small" style="margin:6px 0 0">달리기·수영·헬스 등 체크리스트에 없는 운동을 기록하면 오늘 예산에 더해집니다.</p>'}</div>`;
 }
 
 function predictionBlock(v) {
@@ -175,7 +189,8 @@ function renderLog() {
         : `${favList.length ? `<h2>즐겨찾기</h2>${favList.map(resultRow).join('')}` : ''}${recentList.length ? `<h2>최근 7일</h2>${recentList.map(resultRow).join('')}` : ''}${!favList.length && !recentList.length ? '<p class="muted small" style="margin:4px 0">검색해서 탭 한 번으로 기록합니다. 기본 1인분, 목록에서 분량을 바꿀 수 있어요.</p>' : ''}<button class="small" data-action="custom-open" style="margin-top:6px">직접 입력</button>`}
     </div>
     <div class="card tight"><div class="row between"><h2 style="margin:0">오늘 먹은 것</h2><span class="num"><b>${v.intake}</b> <span class="faint">/ ${v.budget.budget === null ? '치팅' : v.budget.budget} kcal</span></span></div>
-      ${meals || '<p class="muted small" style="margin:6px 0 0">아직 기록이 없습니다</p>'}</div>`;
+      ${meals || '<p class="muted small" style="margin:6px 0 0">아직 기록이 없습니다</p>'}</div>
+    ${exerciseCard(v)}`;
   if (ui.query) { const q = $('#food-q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
 }
 
@@ -187,6 +202,53 @@ function customSheet(name = '') {
     <p class="small bad hidden" id="c-err"></p>
     <div class="row"><button class="primary grow" data-action="custom-save">저장하고 기록</button><button data-action="sheet-close">취소</button></div>`);
   $('#c-kcal').focus();
+}
+
+// ---------- 운동 기록 시트 (R-16) ----------
+function exerciseSheet(date) { ui.exDate = date; ui.exQuery = ''; ui.exPick = null; openSheet(''); renderExerciseSheet(); }
+function renderExerciseSheet() {
+  const st = app.state, fav = new Set(st.exerciseFavorites);
+  const row = e => `<div class="result" data-action="ex-pick" data-id="${esc(e.id)}" role="button" tabindex="0">
+    <button class="ghost star" data-action="ex-fav" data-id="${esc(e.id)}" aria-label="즐겨찾기">${fav.has(e.id) ? '★' : '☆'}</button>
+    <div><div class="name">${esc(e.name)}</div><div class="sub">${esc(e.category)} · ${e.amount}${esc(e.unit)} 기준</div></div>
+    <div class="kcal num">${Math.round(e.kcal * e.amount)} <span class="faint">kcal</span></div></div>`;
+  let body;
+  if (ui.exPick) {
+    const e = ui.exPick;
+    const v = app.dayView(ui.exDate);
+    body = `<div class="row between"><div><b>${esc(e.name)}</b><div class="small muted">${esc(e.category)}</div></div><button class="small" data-action="ex-back">← 다른 운동</button></div>
+      <div class="row wrap" style="gap:6px"><div class="field grow"><label>수량 (${esc(e.unit)})</label><input id="ex-amount" type="number" inputmode="decimal" min="0" step="${e.unit === 'km' ? '0.1' : '1'}" value="${e.amount}"></div>
+        <div class="field grow"><label>시각</label><input id="ex-time" type="time" value="${ui.exDate === app.today() ? app.nowTime() : '18:00'}"></div></div>
+      <p class="small muted" style="margin:0 0 8px">소모 <b id="ex-kcal" class="num"></b> kcal <span class="faint">(추세 체중 ${fmt1(v.trend ?? v.goal?.startWeight ?? CONFIG.goal.baselineWeight)}kg 기준)</span></p>
+      <div class="row"><button class="primary grow" data-action="ex-save">기록</button><button data-action="sheet-close">취소</button></div>`;
+  } else {
+    const results = ui.exQuery ? searchExercises(ui.exQuery, { customs: st.customExercises, favorites: fav, recent: app.recentExerciseIds() }) : [];
+    const favList = !ui.exQuery ? st.exerciseFavorites.map(id => app.findExercise(id)).filter(Boolean) : [];
+    const recentList = !ui.exQuery ? [...app.recentExerciseIds()].map(id => app.findExercise(id)).filter(e => e && !fav.has(e.id)).slice(0, 8) : [];
+    const list = ui.exQuery ? (results.length ? results.map(row).join('') : `<p class="muted small">검색 결과 없음</p><button class="primary" data-action="ex-custom-open">“${esc(ui.exQuery)}” 직접 입력</button>`)
+      : `${favList.length ? `<h2>즐겨찾기</h2>${favList.map(row).join('')}` : ''}${recentList.length ? `<h2>최근 2주</h2>${recentList.map(row).join('')}` : ''}${!favList.length && !recentList.length ? '<p class="muted small" style="margin:4px 0">예: 달리기, 수영, 헬스, 축구, 계단, 집안일 — 초성(ㄷㄹㄱ)도 됩니다.</p>' : ''}<button class="small" data-action="ex-custom-open" style="margin-top:6px">직접 입력</button>`;
+    body = `<input id="ex-q" type="search" placeholder="운동 검색 (예: 달리기, 수영, ㅅㅋㅌ)" value="${esc(ui.exQuery)}" autocomplete="off" aria-label="운동 검색"><div style="max-height:52dvh;overflow:auto">${list}</div>`;
+  }
+  $('#sheet').innerHTML = `<h3>운동 기록 · ${kdate(ui.exDate)}</h3>${body}`;
+  if (ui.exPick) { updateExKcal(); $('#ex-amount').focus(); $('#ex-amount').select(); }
+  else { const q = $('#ex-q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+}
+function updateExKcal() {
+  const e = ui.exPick; if (!e) return;
+  const v = app.dayView(ui.exDate);
+  const amount = parseFloat($('#ex-amount').value) || 0;
+  const w = v.trend ?? v.goal?.startWeight ?? null;
+  $('#ex-kcal').textContent = Math.max(0, Math.round(e.kcal * amount * (typeof w === 'number' ? w / CONFIG.workoutRefWeight : 1)));
+}
+function exerciseCustomSheet(name = '') {
+  $('#sheet').innerHTML = `<h3>운동 직접 입력</h3>
+    <div class="field"><label>이름</label><input id="cx-name" type="text" value="${esc(name)}" maxlength="40"></div>
+    <div class="row wrap" style="gap:6px"><div class="field grow"><label>단위</label><select id="cx-unit">${EXERCISE_UNITS.map(u => `<option value="${u}">${u}</option>`).join('')}</select></div>
+      <div class="field grow"><label>단위당 kcal (1분·1회·1km)</label><input id="cx-kcal" type="number" inputmode="decimal" min="0.01" step="0.1" placeholder="예: 8"></div></div>
+    <p class="faint">잘 모르면 가벼운 운동 4, 보통 8, 격한 운동 12 kcal/분 정도입니다. 체중 비례로 환산됩니다.</p>
+    <p class="small bad hidden" id="cx-err"></p>
+    <div class="row"><button class="primary grow" data-action="ex-custom-save">저장하고 수량 입력</button><button data-action="ex-back">취소</button></div>`;
+  $('#cx-name').focus();
 }
 
 // ---------- 그래프 ----------
@@ -205,6 +267,7 @@ function chartsHtml(target) {
     <div class="charts">
       <div class="card"><h2>섭취 kcal · 예산</h2>${kcalChart({ rows: g.rows })}</div>
       <div class="card"><h2>운동 완료율</h2>${workoutChart({ rows: g.rows })}</div>
+      <div class="card"><h2>운동 소모 kcal</h2>${exerciseKcalChart({ rows: g.rows })}</div>
       <div class="card"><h2>예측 정확도</h2>${accuracyChart({ rows: g.rows, meanErr: g.meanErr })}</div>
     </div>`;
 }
@@ -215,7 +278,7 @@ function showTip(i) {
   const days = ui.range === 'all' && app.state.goal ? Math.max(30, (new Date(app.today()) - new Date(app.state.goal.startDate)) / 86400000 + 1) : ui.range;
   const r = app.graphData(app.today(), Math.round(days)).rows[i];
   if (!r) return;
-  ui.tip = `${kdate(r.date)} · 체중 ${fmt1(r.weight)} · 목표 ${fmt1(r.target)} · 섭취 ${r.logged ? r.intake + 'kcal' : '미기록'}${r.budget !== null ? ' / 예산 ' + r.budget : ''} · 운동 ${Math.round(r.workoutRate * 100)}% · ${STATUS_LABEL[r.status]}${r.sticker ? ' ⭐' : ''}`;
+  ui.tip = `${kdate(r.date)} · 체중 ${fmt1(r.weight)} · 목표 ${fmt1(r.target)} · 섭취 ${r.logged ? r.intake + 'kcal' : '미기록'}${r.budget !== null ? ' / 예산 ' + r.budget : ''} · 운동 ${Math.round(r.workoutRate * 100)}% / ${r.workoutKcal}kcal · ${STATUS_LABEL[r.status]}${r.sticker ? ' ⭐' : ''}`;
   document.querySelectorAll('[id$="-tip"]').forEach(el => { el.textContent = ui.tip; });
 }
 
@@ -400,6 +463,22 @@ document.addEventListener('click', e => {
       const r = app.addCustomFood({ name, kcal, serving }); if (!r.ok) break;
       app.addMeal(ui.logDate, { foodId: r.food.id, name, kcal, serving, portion: 1, time: ui.logDate === today ? app.nowTime() : '12:00' });
       ui.query = ''; closeSheet(); toast(`${name} ${kcal}kcal 기록`); render(); break; }
+    // 운동 기록 (R-16)
+    case 'ex-open': exerciseSheet(t.dataset.date || today); break;
+    case 'ex-pick': { const ex = app.findExercise(id); if (!ex) break; ui.exPick = ex; renderExerciseSheet(); break; }
+    case 'ex-fav': e.stopPropagation(); app.toggleExerciseFavorite(id); renderExerciseSheet(); break;
+    case 'ex-back': ui.exPick = null; renderExerciseSheet(); break;
+    case 'ex-custom-open': exerciseCustomSheet(ui.exQuery); break;
+    case 'ex-custom-save': { const name = $('#cx-name').value.trim(), unit = $('#cx-unit').value, kcal = parseFloat($('#cx-kcal').value);
+      if (!name || !(kcal > 0)) { const er = $('#cx-err'); er.textContent = !name ? '이름을 입력하세요' : '단위당 kcal 는 0보다 커야 합니다'; er.classList.remove('hidden'); break; }
+      const r = app.addCustomExercise({ name, unit, kcal }); if (!r.ok) break;
+      ui.exPick = r.exercise; ui.exQuery = ''; renderExerciseSheet(); break; }
+    case 'ex-save': { const ex = ui.exPick; if (!ex) break; const amount = parseFloat($('#ex-amount').value);
+      if (!(amount > 0)) { toast('수량을 입력하세요'); break; }
+      const r = app.addExercise(ui.exDate, { exerciseId: ex.id, name: ex.name, unit: ex.unit, amount: Math.round(amount * 10) / 10, kcalPerUnit: ex.kcal, time: $('#ex-time').value || app.nowTime() });
+      if (!r.ok) { toast(r.reason === 'limit' ? '하루 30건까지 기록할 수 있습니다' : r.reason === 'not-editable' ? '7일 이내 날짜만 기록할 수 있습니다' : '값을 확인하세요'); break; }
+      closeSheet(); toast(`${ex.name} ${r.entry.amount}${ex.unit} · ${r.entry.kcal}kcal 기록`); render(); break; }
+    case 'ex-del': { const r = app.removeExercise(t.dataset.date, id); if (r.ok) { render(); toast('운동 기록 삭제됨', { action: '되돌리기', onAction: () => { r.restore(); render(); } }); } break; }
     case 'meal-del': { const r = app.removeMeal(ui.logDate, id); if (r.ok) { render(); toast('삭제됨', { action: '되돌리기', onAction: () => { r.restore(); render(); } }); } break; }
     // 그래프
     case 'range': ui.range = t.dataset.range === 'all' ? 'all' : Number(t.dataset.range); ui.tip = ''; render(); break;
@@ -439,9 +518,11 @@ document.addEventListener('click', e => {
       app.completeOnboarding({ baseline, targetWeight, profile }); closeSheet(); ui.notices = app.runMaintenance(); render(); break; }
   }
 });
-document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'weight-in') $('[data-action="weight-save"]')?.click(); if (e.key === 'Enter' && e.target.id === 'cal-weight') $('[data-action="cal-weight-save"]')?.click(); if (e.key === 'Enter' && e.target.closest('.result')) e.target.closest('.result').click(); });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'weight-in') $('[data-action="weight-save"]')?.click(); if (e.key === 'Enter' && e.target.id === 'cal-weight') $('[data-action="cal-weight-save"]')?.click(); if (e.key === 'Enter' && e.target.closest('.result')) e.target.closest('.result').click(); if (e.key === 'Enter' && e.target.id === 'ex-amount') $('[data-action="ex-save"]')?.click(); });
 document.addEventListener('input', e => {
   if (e.target.id === 'food-q') { ui.query = e.target.value; renderLog(); }
+  if (e.target.id === 'ex-q') { ui.exQuery = e.target.value; renderExerciseSheet(); }
+  if (e.target.id === 'ex-amount') updateExKcal();
   if (e.target.id === 'sim-intake') { ui.sim.intake = Number(e.target.value); applySim(); }
   if (e.target.id === 'sim-rate') { ui.sim.rate = Number(e.target.value); applySim(); }
 });

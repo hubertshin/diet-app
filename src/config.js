@@ -1,7 +1,7 @@
 // 튠 값. PRD 부록 A/B/D의 [가정] 수치가 모두 여기에 모여 있다. 설정 화면에서 바꿀 수 있는 값은 state.settings가 덮어쓴다.
 
 export const CONFIG = Object.freeze({
-  schemaVersion: 1,
+  schemaVersion: 2,           // v2: 운동 기록(exercises)·운동 즐겨찾기 추가. 저장 키는 그대로 — 기존 데이터는 그대로 읽고 새 필드만 채운다.
   storageKey: 'diet.v1',
 
   goal: Object.freeze({
@@ -35,6 +35,7 @@ export const CONFIG = Object.freeze({
 
   weight: Object.freeze({ min: 30, max: 250, confirmDelta: 5, editableDays: 7, trendDays: 7 }),
   meals: Object.freeze({ maxPerDay: 50, editableDays: 7 }),
+  exercises: Object.freeze({ maxPerDay: 30, editableDays: 7 }),   // 자유 운동 기록 (R-16)
 
   simulation: Object.freeze({ intakeMin: 800, intakeMax: 4000, bingeExtra: 800 }),
 

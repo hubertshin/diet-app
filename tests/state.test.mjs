@@ -547,7 +547,7 @@ describe('R-13 백업·복원', () => {
     const app2 = makeApp({ backing: memoryBacking() });
     const r = app2.importJson(json, 'replace');
     assert.ok(r.ok);
-    assert.deepEqual(r.summary, { weights: 1, meals: 1, workouts: 0, customs: 0 });
+    assert.deepEqual(r.summary, { weights: 1, meals: 1, workouts: 0, exercises: 0, customs: 0 });
     assert.equal(app2.state.weights[T0], 78);
     assert.deepEqual(app2.state.favorites, ['rice']);
     assert.equal(app2.state.goal.targetWeight, 73);
@@ -619,5 +619,103 @@ describe('emptyState', () => {
     assert.equal(s.onboarded, false);
     assert.equal(s.settings.workoutVersions[0].items.length, CONFIG.workouts.length);
     assert.equal(s.settings.reminders.weight.at, '07:00');
+  });
+});
+
+describe('R-16 자유 운동 기록', () => {
+  test('운동을 기록하면 그날 운동 kcal 에 더해지고 예산이 그만큼 늘어난다', () => {
+    const app = onboard(makeApp());
+    const before = app.dayView().budget.raw;
+    const r = app.addExercise(T0, { exerciseId: 'run-km', name: '달리기 (거리)', unit: 'km', amount: 5, kcalPerUnit: 78, time: '07:30' });
+    assert.ok(r.ok); assert.equal(r.entry.kcal, 390);
+    const v = app.dayView();
+    assert.equal(v.workout.extraKcal, 390); assert.equal(v.workout.kcal, 390); assert.equal(v.workout.checklistKcal, 0);
+    assert.equal(v.workout.logs.length, 1);
+    assert.equal(v.budget.raw, before + 390, '예산 반영 (하한 적용 전 값)');
+    assert.equal(v.workout.rate, 0, '체크리스트 완료율은 그대로');
+    assert.ok(app.events.some(e => e.name === 'exercise_logged'));
+  });
+  test('kcal 는 추세 체중에 비례한다 (78kg 기준 DB 값)', () => {
+    const app = onboard(makeApp(), 39);
+    const r = app.addExercise(T0, { exerciseId: 'pushup', name: '팔굽혀펴기', unit: '회', amount: 200, kcalPerUnit: 0.4 });
+    assert.equal(r.entry.kcal, 40);
+  });
+  test('수량을 바꾸면 kcal 가 다시 계산되고, 삭제 후 되돌리기가 된다', () => {
+    const app = onboard(makeApp());
+    const { entry } = app.addExercise(T0, { exerciseId: 'walk', name: '걷기 (보통)', unit: '분', amount: 30, kcalPerUnit: 4.8 });
+    assert.equal(entry.kcal, 144);
+    app.updateExercise(T0, entry.id, { amount: 60 });
+    assert.equal(app.state.exercises[T0][0].kcal, 288);
+    const r = app.removeExercise(T0, entry.id);
+    assert.ok(r.ok); assert.equal(app.state.exercises[T0], undefined);
+    r.restore();
+    assert.equal(app.state.exercises[T0].length, 1);
+    assert.equal(app.dayView().workout.kcal, 288);
+  });
+  test('직접 입력 운동: 이름·단위·단위당 kcal 로 등록하고 검색·기록에 쓴다', () => {
+    const app = onboard(makeApp());
+    assert.ok(!app.addCustomExercise({ name: '', unit: '분', kcal: 5 }).ok);
+    assert.ok(!app.addCustomExercise({ name: 'x', unit: '시간', kcal: 5 }).ok);
+    const r = app.addCustomExercise({ name: '동네 한 바퀴', unit: '분', kcal: 6 });
+    assert.ok(r.ok); assert.ok(r.exercise.custom); assert.equal(r.exercise.amount, 30);
+    assert.equal(app.findExercise(r.exercise.id).name, '동네 한 바퀴');
+    const e = app.addExercise(T0, { exerciseId: r.exercise.id, name: r.exercise.name, unit: '분', amount: 20, kcalPerUnit: 6 });
+    assert.equal(e.entry.kcal, 120);
+    assert.ok(app.toggleExerciseFavorite(r.exercise.id)); assert.ok(app.recentExerciseIds().has(r.exercise.id));
+  });
+  test('총 kcal 만 아는 운동도 기록할 수 있다 (kcalPerUnit 없이)', () => {
+    const app = onboard(makeApp());
+    const r = app.addExercise(T0, { name: '스마트워치 기록', unit: '회', amount: 1, kcal: 250 });
+    assert.ok(r.ok); assert.equal(r.entry.kcal, 250);
+    assert.ok(!app.addExercise(T0, { name: '없음', unit: '회', amount: 1 }).ok, 'kcal 도 kcalPerUnit 도 없으면 거부');
+    assert.ok(!app.addExercise(T0, { name: 'x', unit: '회', amount: 0, kcalPerUnit: 1 }).ok, '수량 0 거부');
+  });
+  test('7일 지난 날짜와 하루 30건 초과는 거부한다', () => {
+    const app = onboard(makeApp());
+    app._travel('2026-11-10');
+    assert.equal(app.addExercise('2026-11-01', { name: 'x', unit: '회', amount: 1, kcal: 10 }).reason, 'not-editable');
+    for (let i = 0; i < 30; i++) assert.ok(app.addExercise('2026-11-10', { name: 'x', unit: '회', amount: 1, kcal: 10 }).ok);
+    assert.equal(app.addExercise('2026-11-10', { name: 'x', unit: '회', amount: 1, kcal: 10 }).reason, 'limit');
+  });
+  test('운동 기록은 예측(7일 평균 적자)과 그래프 행(workoutKcal)에 반영된다', () => {
+    const app = onboard(makeApp());
+    app.addMeal(T0, { name: '밥', kcal: 1500 });
+    const p0 = app.prediction(T0).avgDeficit;
+    app.addExercise(T0, { name: '달리기', unit: '분', amount: 30, kcalPerUnit: 10 });
+    assert.equal(app.prediction(T0).avgDeficit, p0 + 300);
+    const row = app.graphData(T0, 1).rows[0];
+    assert.equal(row.workoutKcal, 300); assert.equal(row.exerciseKcal, 300);
+  });
+  test('기존 v1 저장 데이터를 열면 체중·식사·체크리스트·설정이 그대로이고 운동 기록 필드만 추가된다 (데이터 보존)', () => {
+    const backing = memoryBacking();
+    const v1 = { version: 1, updatedAt: 5, onboarded: true, settings: { tdee: 2250, tdeeHistory: [{ date: T0, from: 2300, to: 2250, reason: 'manual' }], profile: { sex: 'male', height: 175, age: 40 }, floor: 1400, fastingThreshold: 1, stickerTolerance: 0.5, fastingWindowStart: '19:00', workoutVersions: [{ from: '0000-01-01', items: CONFIG.workouts.map(w => ({ ...w })) }], reminders: { weight: { on: true, at: '07:00' }, workout: { on: true, at: '21:00' } }, lastCalibration: null, lastPlateauPrompt: null },
+      goal: { startDate: T0, startWeight: 78, targetWeight: 73, periodDays: 30, endDate: '2026-11-26' }, goalHistory: [], weights: { [T0]: 78, '2026-10-28': 77.6 },
+      meals: { [T0]: [{ id: 'm1', foodId: 'rice', name: '흰쌀밥 1공기', kcal: 310, serving: '210g', portion: 1, time: '08:00' }] }, workouts: { [T0]: { pushup: { done: true } } },
+      fastingWindow: {}, customs: [{ id: 'custom-1', name: '엄마표', kcal: 300, serving: '1인분', custom: true }], favorites: ['rice'], cheat: { scheduled: {}, vouchersIssued: 0, vouchersUsed: 0 }, snapshots: { [T0]: 77.9 }, pendingSuggestion: null };
+    backing.setItem('test', JSON.stringify(v1));
+    const app = makeApp({ date: '2026-10-28', backing });
+    const s = app.state;
+    assert.equal(s.version, 2);
+    assert.deepEqual(s.weights, v1.weights); assert.deepEqual(s.meals, v1.meals); assert.deepEqual(s.workouts, v1.workouts);
+    assert.deepEqual(s.customs, v1.customs); assert.deepEqual(s.favorites, v1.favorites); assert.deepEqual(s.snapshots, v1.snapshots);
+    assert.equal(s.settings.tdee, 2250); assert.deepEqual(s.settings.profile, v1.settings.profile); assert.deepEqual(s.goal, v1.goal);
+    assert.deepEqual(s.exercises, {}); assert.deepEqual(s.customExercises, []); assert.deepEqual(s.exerciseFavorites, []);
+    // 기록을 추가해도 기존 값은 그대로
+    app.addExercise('2026-10-28', { name: '걷기', unit: '분', amount: 10, kcalPerUnit: 4.8 });
+    const saved = JSON.parse(backing.getItem('test'));
+    assert.deepEqual(saved.weights, v1.weights); assert.deepEqual(saved.meals, v1.meals); assert.equal(saved.exercises['2026-10-28'].length, 1);
+  });
+  test('병합(동기화·가져오기)은 운동 기록을 id 기준 합집합으로 합치고 사용자 운동·즐겨찾기도 합친다', () => {
+    const a = onboard(makeApp());
+    a.addExercise(T0, { name: 'A', unit: '회', amount: 1, kcal: 10 });
+    const b = onboard(makeApp());
+    b.addExercise(T0, { name: 'B', unit: '회', amount: 1, kcal: 20 });
+    const cx = b.addCustomExercise({ name: '커스텀', unit: '분', kcal: 5 }); b.toggleExerciseFavorite(cx.exercise.id);
+    const r = a.importJson(b.exportJson(), 'merge');
+    assert.ok(r.ok); assert.equal(r.summary.exercises, 1);
+    assert.equal(a.state.exercises[T0].length, 2);
+    assert.equal(a.state.customExercises.length, 1); assert.deepEqual(a.state.exerciseFavorites, [cx.exercise.id]);
+    a.importJson(b.exportJson(), 'merge');
+    assert.equal(a.state.exercises[T0].length, 2, '중복 없음');
   });
 });

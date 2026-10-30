@@ -119,7 +119,7 @@ function exerciseCard(v) {
   const logs = v.workout.logs.map(e => `<div class="meal">
     <div><div class="name">${esc(e.name)}</div><div class="sub"><span class="num">${e.amount}${esc(e.unit)}</span> · ${e.time}</div></div>
     <span class="num"><b>${e.kcal}</b> <span class="faint">kcal</span></span>
-    <button class="small" data-action="ex-del" data-date="${v.date}" data-id="${e.id}" aria-label="삭제">🗑</button></div>`).join('');
+    <button class="small" data-action="ex-del" data-date="${v.date}" data-id="${e.id}" aria-label="${esc(e.name)} 삭제">삭제</button></div>`).join('');
   return `<div class="card tight"><div class="row between"><h2 style="margin:0">운동 기록 <span class="small muted num">+${v.workout.extraKcal} kcal</span></h2>
       ${v.editable.exercises ? `<button class="small primary" data-action="ex-open" data-date="${v.date}">+ 운동 추가</button>` : ''}</div>
     ${logs || '<p class="muted small" style="margin:6px 0 0">달리기·수영·헬스 등 체크리스트에 없는 운동을 기록하면 오늘 예산에 더해집니다.</p>'}</div>`;
@@ -210,7 +210,7 @@ function renderExerciseSheet() {
   const st = app.state, fav = new Set(st.exerciseFavorites);
   const row = e => `<div class="result" data-action="ex-pick" data-id="${esc(e.id)}" role="button" tabindex="0">
     <button class="ghost star" data-action="ex-fav" data-id="${esc(e.id)}" aria-label="즐겨찾기">${fav.has(e.id) ? '★' : '☆'}</button>
-    <div><div class="name">${esc(e.name)}</div><div class="sub">${esc(e.category)} · ${e.amount}${esc(e.unit)} 기준</div></div>
+    <div><div class="name">${esc(e.name)}</div><div class="sub">${esc(e.category)} · ${e.amount}${esc(e.unit)} 기준${e.custom ? ` · <button class="ghost small" data-action="ex-custom-del" data-id="${esc(e.id)}" style="min-height:24px;padding:0 6px;font-size:12px">삭제</button>` : ''}</div></div>
     <div class="kcal num">${Math.round(e.kcal * e.amount)} <span class="faint">kcal</span></div></div>`;
   let body;
   if (ui.exPick) {
@@ -468,6 +468,7 @@ document.addEventListener('click', e => {
     case 'ex-pick': { const ex = app.findExercise(id); if (!ex) break; ui.exPick = ex; renderExerciseSheet(); break; }
     case 'ex-fav': e.stopPropagation(); app.toggleExerciseFavorite(id); renderExerciseSheet(); break;
     case 'ex-back': ui.exPick = null; renderExerciseSheet(); break;
+    case 'ex-custom-del': { e.stopPropagation(); const r = app.removeCustomExercise(id); if (r.ok) { renderExerciseSheet(); toast('직접 입력 운동을 삭제했습니다 (이미 기록한 내용은 남습니다)', { action: '되돌리기', onAction: () => { r.restore(); renderExerciseSheet(); } }); } break; }
     case 'ex-custom-open': exerciseCustomSheet(ui.exQuery); break;
     case 'ex-custom-save': { const name = $('#cx-name').value.trim(), unit = $('#cx-unit').value, kcal = parseFloat($('#cx-kcal').value);
       if (!name || !(kcal > 0)) { const er = $('#cx-err'); er.textContent = !name ? '이름을 입력하세요' : '단위당 kcal 는 0보다 커야 합니다'; er.classList.remove('hidden'); break; }

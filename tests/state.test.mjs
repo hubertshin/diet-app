@@ -663,6 +663,19 @@ describe('R-16 자유 운동 기록', () => {
     assert.equal(e.entry.kcal, 120);
     assert.ok(app.toggleExerciseFavorite(r.exercise.id)); assert.ok(app.recentExerciseIds().has(r.exercise.id));
   });
+  test('기록 목록은 최근에 추가한 것이 위에 오고, 직접 입력 운동 종류는 삭제·되돌리기가 되며 기존 기록은 남는다', () => {
+    const app = onboard(makeApp());
+    const cx = app.addCustomExercise({ name: '내 운동', unit: '분', kcal: 5 });
+    app.toggleExerciseFavorite(cx.exercise.id);
+    app.addExercise(T0, { exerciseId: cx.exercise.id, name: '내 운동', unit: '분', amount: 10, kcalPerUnit: 5, time: '09:00' });
+    app.addExercise(T0, { name: '둘째', unit: '회', amount: 1, kcal: 10, time: '07:00' });
+    assert.deepEqual(app.dayView(T0).workout.logs.map(e => e.name), ['둘째', '내 운동'], '나중에 추가한 것이 먼저');
+    const r = app.removeCustomExercise(cx.exercise.id);
+    assert.ok(r.ok); assert.equal(app.state.customExercises.length, 0); assert.deepEqual(app.state.exerciseFavorites, []);
+    assert.equal(app.state.exercises[T0].length, 2, '기록은 그대로'); assert.equal(app.dayView(T0).workout.kcal, 60);
+    r.restore(); assert.equal(app.state.customExercises.length, 1);
+    assert.equal(app.removeCustomExercise('nope').ok, false);
+  });
   test('총 kcal 만 아는 운동도 기록할 수 있다 (kcalPerUnit 없이)', () => {
     const app = onboard(makeApp());
     const r = app.addExercise(T0, { name: '스마트워치 기록', unit: '회', amount: 1, kcal: 250 });

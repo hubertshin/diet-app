@@ -84,7 +84,7 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
   function intakeOn(date) {
     return (state.meals[date] || []).reduce((a, m) => a + Math.round(m.kcal * m.portion), 0);
   }
-  function exerciseLogsOn(date) { return (state.exercises[date] || []).slice().sort((a, b) => a.time.localeCompare(b.time)); }
+  function exerciseLogsOn(date) { return (state.exercises[date] || []).slice().reverse(); } // 최근에 추가한 것이 위
   function exerciseKcalOn(date) { return (state.exercises[date] || []).reduce((a, e) => a + (Number(e.kcal) || 0), 0); }
   // 운동 kcal = 체크리스트(R-5) + 자유 기록(R-16). rows/rate 는 체크리스트만, kcal 는 합계 (예산·예측·보정이 모두 이 값을 쓴다).
   function workoutOn(date) {
@@ -302,6 +302,15 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
     state.customExercises.unshift(ex);
     persist();
     return { ok: true, exercise: ex };
+  }
+  // 직접 입력한 운동 종류 삭제. 이미 기록된 운동(이름·kcal 를 자체 보관)은 그대로 남는다.
+  function removeCustomExercise(id) {
+    const idx = state.customExercises.findIndex(e => e.id === id);
+    if (idx < 0) return { ok: false, reason: 'not-found' };
+    const [removed] = state.customExercises.splice(idx, 1);
+    state.exerciseFavorites = state.exerciseFavorites.filter(f => f !== id);
+    persist();
+    return { ok: true, restore: () => { state.customExercises.splice(Math.min(idx, state.customExercises.length), 0, removed); persist(); } };
   }
   function toggleExerciseFavorite(id) {
     const i = state.exerciseFavorites.indexOf(id);
@@ -522,7 +531,7 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
     get state() { return state; }, events, today, nowTime,
     dayView, graphData, stats, prediction, judgeUpTo, workoutItemsOn, recentFoodIds,
     setWeight, deleteWeight, addMeal, updateMeal, removeMeal, addCustomFood, toggleFavorite,
-    setWorkout, updateWorkoutItems, addExercise, updateExercise, removeExercise, addCustomExercise, toggleExerciseFavorite, recentExerciseIds, setGoal, restartGoal, useCheat, cancelCheat, setFastingWindow,
+    setWorkout, updateWorkoutItems, addExercise, updateExercise, removeExercise, addCustomExercise, removeCustomExercise, toggleExerciseFavorite, recentExerciseIds, setGoal, restartGoal, useCheat, cancelCheat, setFastingWindow,
     setSettings, completeOnboarding, runMaintenance, acceptSuggestion, dismissSuggestion,
     exportJson, parseImport, importJson, applyRemote, onChange, reset, findFood: id => findFood(id, state.customs), findExercise: id => findExercise(id, state.customExercises),
   };

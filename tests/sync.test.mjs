@@ -31,7 +31,7 @@ function remoteData(gh, id) { return JSON.parse(gh.gists[id].files[GIST_FILE].co
 
 function mkApp(t = 1000) {
   let clock = t;
-  const app = createApp({ storage: null, now: () => new Date(2026, 9, 27, 8, 0, 0, clock) });
+  const app = createApp({ storage: null, now: () => new Date(Date.UTC(2026, 9, 26, 23, 0, 0, clock)) }); // 2026-10-27 08:00 KST
   return { app, tick: n => { clock += n; } };
 }
 function mkSync(app, gh, opts = {}) {

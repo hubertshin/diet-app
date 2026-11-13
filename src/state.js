@@ -62,8 +62,8 @@ export function createApp({ storage, now = () => new Date(), onEvent = () => {} 
     return ok;
   }
   function onChange(fn) { changeListeners.push(fn); return () => { const i = changeListeners.indexOf(fn); if (i >= 0) changeListeners.splice(i, 1); }; }
-  function today() { return C.toDateStr(now()); }
-  function nowTime() { const d = now(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+  function today() { return C.kstDateStr(now()); }
+  function nowTime() { return C.kstTimeStr(now()); }
   function editable(date, days) {
     const diff = C.daysBetween(date, today());
     return diff >= 0 && diff <= days;

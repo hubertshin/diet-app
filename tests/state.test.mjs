@@ -8,8 +8,9 @@ import { addDays } from '../src/calc.js';
 // 기준 시각: 2026-10-27(화) 08:00. 체중을 넣으면 그날이 목표 시작일(78.0 → 73.0, 기한 11-26)이 된다.
 const T0 = '2026-10-27';
 function at(date, hh = 8, mm = 0) {
+  // 해당 날짜·시각의 KST 순간. 기기 시간대와 무관하게 앱의 KST 기준 날짜 판정과 일치한다
   const [y, m, d] = date.split('-').map(Number);
-  return new Date(y, m - 1, d, hh, mm);
+  return new Date(Date.UTC(y, m - 1, d, hh - 9, mm));
 }
 function makeApp({ date = T0, time = [8, 0], backing = memoryBacking() } = {}) {
   let cur = { date, time };

@@ -13,6 +13,17 @@ describe('날짜 유틸', () => {
     assert.ok(C.isWeekend('2026-11-01'), '일요일');
     assert.ok(!C.isWeekend('2026-10-27'), '화요일');
   });
+  test('kstDateStr/kstTimeStr: 기기 시간대와 무관하게 KST 기준', () => {
+    // 2026-11-12 16:30 UTC = 2026-11-13 01:30 KST — UTC 기기에서는 아직 12일이지만 KST로는 13일
+    const d = new Date(Date.UTC(2026, 10, 12, 16, 30));
+    assert.equal(C.kstDateStr(d), '2026-11-13');
+    assert.equal(C.kstTimeStr(d), '01:30');
+    // 2026-11-12 14:59 UTC = 2026-11-12 23:59 KST — 날짜 경계 직전
+    assert.equal(C.kstDateStr(new Date(Date.UTC(2026, 10, 12, 14, 59))), '2026-11-12');
+    // 2026-11-12 15:00 UTC = 2026-11-13 00:00 KST — 경계 통과
+    assert.equal(C.kstDateStr(new Date(Date.UTC(2026, 10, 12, 15, 0))), '2026-11-13');
+    assert.equal(C.kstTimeStr(new Date(Date.UTC(2026, 10, 12, 15, 0))), '00:00');
+  });
 });
 
 describe('R-3 롤링 30일 목표와 목표 경로', () => {

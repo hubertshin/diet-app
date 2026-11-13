@@ -6,7 +6,7 @@ import { createSync } from './sync.js';
 import { searchFoods } from './foods.js';
 import { searchExercises, EXERCISE_UNITS } from './exercises.js';
 import { weightChart, kcalChart, workoutChart, exerciseKcalChart, accuracyChart } from './chart.js';
-import { addDays, parseDate, toDateStr, simulate, estimateTdee } from './calc.js';
+import { addDays, parseDate, toDateStr, simulate, estimateTdee, KST_OFFSET_MS } from './calc.js';
 
 const DEBUG = location.search.includes('debug');
 const app = createApp({ storage: createStorage(), onEvent: ev => { if (DEBUG) console.log('[event]', ev); } });
@@ -343,7 +343,7 @@ function renderCal() {
 
 // ---------- 설정 ----------
 const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=gist&description=diet-app-sync';
-function fmtTime(ms) { if (!ms) return '—'; const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+function fmtTime(ms) { if (!ms) return '—'; const d = new Date(ms + KST_OFFSET_MS); return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; }
 function renderSyncCard() {
   const st = sync.status();
   if (!st.connected) {
@@ -553,11 +553,12 @@ document.querySelectorAll('nav.tabs button').forEach(b => b.addEventListener('cl
 function tickCountdown() {
   const el = $('#fast-countdown'); if (!el) return;
   const v = app.dayView(); if (!v.fasting) return;
-  const now = new Date(); const [h, m] = v.fasting.start.split(':').map(Number);
-  const start = new Date(now); start.setHours(h, m, 0, 0);
-  const end = new Date(start.getTime() + CONFIG.fasting.windowHours * 3600000);
+  const [h, m] = v.fasting.start.split(':').map(Number);
+  const sinceMidnight = (Date.now() + KST_OFFSET_MS) % 86400000; // KST 자정 기준 경과 ms
+  const start = (h * 60 + m) * 60000;
+  const end = start + CONFIG.fasting.windowHours * 3600000;
   const f = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 3600)}시간 ${Math.floor((s % 3600) / 60)}분`; };
-  el.textContent = now < start ? `식사 창까지 ${f(start - now)}` : now < end ? `식사 창 종료까지 ${f(end - now)}` : '오늘 식사 창이 끝났습니다';
+  el.textContent = sinceMidnight < start ? `식사 창까지 ${f(start - sinceMidnight)}` : sinceMidnight < end ? `식사 창 종료까지 ${f(end - sinceMidnight)}` : '오늘 식사 창이 끝났습니다';
 }
 setInterval(tickCountdown, 30000);
 

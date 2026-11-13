@@ -1,7 +1,17 @@
-// 순수 계산. DOM·저장소 의존 없음. 날짜는 'YYYY-MM-DD' 문자열(기기 로컬 날짜).
+// 순수 계산. DOM·저장소 의존 없음. 날짜는 'YYYY-MM-DD' 문자열(KST 기준).
 import { CONFIG } from './config.js';
 
 // ---------- 날짜 ----------
+// 기준 시간대는 KST(UTC+9) 고정 — 기기 시간대와 무관하게 같은 시각이면 같은 날짜가 나와야 한다
+export const KST_OFFSET_MS = 9 * 3600000;
+export function kstDateStr(d) {
+  const k = new Date(d.getTime() + KST_OFFSET_MS);
+  return `${k.getUTCFullYear()}-${String(k.getUTCMonth() + 1).padStart(2, '0')}-${String(k.getUTCDate()).padStart(2, '0')}`;
+}
+export function kstTimeStr(d) {
+  const k = new Date(d.getTime() + KST_OFFSET_MS);
+  return `${String(k.getUTCHours()).padStart(2, '0')}:${String(k.getUTCMinutes()).padStart(2, '0')}`;
+}
 export function toDateStr(d) {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
